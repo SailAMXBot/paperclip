@@ -1586,11 +1586,6 @@ function buildIssueWakeDiagnosis(input: {
     } days, so the diagnosis only covers returned records.`;
   }
 
-  const unresolvedReviewBlockers = input.blockerDiagnostics.blockers.filter((blocker) => blocker.isUnresolved);
-  if (input.issue.status === "in_review" && unresolvedReviewBlockers.length > 0) {
-    return `Review may proceed; completion is awaiting blockers: ${unresolvedReviewBlockers.map(blockerDiagnosticLabel).join(", ")}.`;
-  }
-
   const latest = input.events[0];
   if (
     latest?.kind === "activity" &&
@@ -1634,6 +1629,11 @@ function buildIssueWakeDiagnosis(input: {
         latest.reason,
       )}.`;
     }
+  }
+
+  const unresolvedReviewBlockers = input.blockerDiagnostics.blockers.filter((blocker) => blocker.isUnresolved);
+  if (input.issue.status === "in_review" && unresolvedReviewBlockers.length > 0) {
+    return `Review may proceed; completion is awaiting blockers: ${unresolvedReviewBlockers.map(blockerDiagnosticLabel).join(", ")}.`;
   }
 
   if (input.events.length > 0) return null;
@@ -13178,13 +13178,13 @@ export function issueRoutes(
       Object.assign(updateFields, transition.patch);
 
       // Avoid terminal run side effects for a final approval waiting on the
-      // existing dependency set. The service rechecks readiness under its lock,
-      // including a blocker set edited by this same request.
-      if (updateFields.status === "done" && req.body.blockedByIssueIds === undefined &&
+      // effective dependency set, including edits in this request. The service
+      // validates and rechecks the same set under its lock before completion.
+      if (updateFields.status === "done" &&
           holdReviewedIssueForDependencies({ status: existing.status,
             executionState: updateFields.executionState ?? existing.executionState,
             unresolvedBlockerIssueIds: [], now: new Date() })) {
-        const readiness = await svc.getDependencyReadiness(existing.id);
+        const readiness = await svc.getDependencyReadiness(existing.id, db, req.body.blockedByIssueIds);
         if (!readiness.isDependencyReady) {
           const hold = holdReviewedIssueForDependencies({ status: existing.status,
             executionState: updateFields.executionState ?? existing.executionState,

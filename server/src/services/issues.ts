@@ -2608,6 +2608,7 @@ async function listIssueDependencyReadinessMap(
   dbOrTx: Pick<Db, "select">,
   companyId: string,
   issueIds: string[],
+  proposedBlockerIds?: string[],
 ) {
   const uniqueIssueIds = [...new Set(issueIds.filter(Boolean))];
   const readinessMap = new Map<string, IssueDependencyReadiness>();
@@ -2616,7 +2617,15 @@ async function listIssueDependencyReadinessMap(
   }
   if (uniqueIssueIds.length === 0) return readinessMap;
 
-  const blockerRows = await dbOrTx
+  const blockerRows = proposedBlockerIds !== undefined
+    ? proposedBlockerIds.length === 0 ? [] : await dbOrTx
+      .select({
+        issueId: sql<string>`${uniqueIssueIds[0]}::text`,
+        blockerIssueId: issues.id,
+        blockerStatus: issues.status,
+        blockerExecutionWorkspaceId: issues.executionWorkspaceId,
+      }).from(issues).where(and(eq(issues.companyId, companyId), inArray(issues.id, proposedBlockerIds)))
+    : await dbOrTx
     .select({
       issueId: issueRelations.relatedIssueId,
       blockerIssueId: issueRelations.issueId,
@@ -9049,7 +9058,7 @@ export function issueService(db: Db) {
       };
     },
 
-    getDependencyReadiness: async (issueId: string, dbOrTx: any = db) => {
+    getDependencyReadiness: async (issueId: string, dbOrTx: any = db, proposedBlockerIds?: string[]) => {
       const issue = await dbOrTx
         .select({ id: issues.id, companyId: issues.companyId })
         .from(issues)
@@ -9062,6 +9071,7 @@ export function issueService(db: Db) {
         dbOrTx,
         issue.companyId,
         [issueId],
+        proposedBlockerIds,
       );
       return readiness.get(issueId) ?? createIssueDependencyReadiness(issueId);
     },

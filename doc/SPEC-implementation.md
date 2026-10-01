@@ -1760,7 +1760,9 @@ See [Announcements](ANNOUNCEMENTS.md) for API and publishing details.
 An unresolved issue dependency prevents builder execution and task completion,
 but does not prevent the currently selected pending review or approval participant
 from running. Final approval records the completed stages while preserving the
-issue's current status. Review attention names the blockers being awaited.
+issue's current status, including `in_progress`. Authorized changes-requested
+verdicts also persist and return the issue to its builder, whose execution stays
+blocked until dependencies resolve. Review attention names the blockers being awaited.
 Resolving the last dependency triggers completion after rechecking completed
 stages, execution holds, pending tool reviews, and dependency readiness.
 The dependency scheduler retries reconciliation after interruption.

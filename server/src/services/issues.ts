@@ -10643,7 +10643,11 @@ export function issueService(db: Db) {
       dbOrTx: any = db,
       postCommitActivityPublications?: ActivityPublication[],
       postCommitActions?: IssuePostCommitAction[],
-      options: { bindRuntimeSharedWorkspace?: boolean } = {},
+      options: {
+        bindRuntimeSharedWorkspace?: boolean;
+        /** Internal only: the route authorized a stage decision and persists it in this transaction. */
+        recordExecutionDecision?: boolean;
+      } = {},
     ) => {
       const ownedActivityPublications: ActivityPublication[] = [];
       const activityPublications =
@@ -10790,7 +10794,10 @@ export function issueService(db: Db) {
       ) {
         throw unprocessable("in_progress issues require an assignee");
       }
-      if (patch.status === "in_progress") {
+      // Recording a verdict is not admission to builder work. The route's
+      // authorized decision may retain in_progress for an approval hold or
+      // return there for changes requested; wake/checkout and done gates still apply.
+      if (patch.status === "in_progress" && !options.recordExecutionDecision) {
         const dependencyReadiness =
           blockedByIssueIds === undefined
             ? (

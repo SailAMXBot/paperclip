@@ -13527,6 +13527,12 @@ export function issueRoutes(
         updateFields.status === "done" || updateFields.status === "cancelled";
       const updateIssue = (tx?: Parameters<typeof svc.update>[2]) => {
         if (tx) {
+          if (transition.decision) {
+            // Only a workflow-authorized decision gets this internal exception.
+            // The decision row and issue patch are committed together below.
+            return svc.update(id, issueUpdateData, tx, postCommitActivityPublications,
+              postCommitIssueActions, { recordExecutionDecision: true });
+          }
           if (shouldCollectCompletionPublication) {
             return svc.update(
               id,

@@ -266,7 +266,7 @@ describe("issue execution policy routes", () => {
     mockAccessService.hasPermission.mockResolvedValue(false);
   });
 
-  it("does not stop a reviewer's goal when final approval adds unresolved blockers", async () => {
+  it.each(["unresolved", "invalid"])("does not stop a reviewer's goal when final approval adds %s blockers", async (kind) => {
     const agentId = "33333333-3333-4333-8333-333333333333";
     const stageId = "11111111-1111-4111-8111-111111111111";
     const blockerId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -282,6 +282,10 @@ describe("issue execution policy routes", () => {
     mockIssueService.getById.mockResolvedValue(issue);
     mockIssueService.getDependencyReadiness.mockResolvedValue({ isDependencyReady: false,
       unresolvedBlockerIssueIds: [blockerId] });
+    if (kind === "invalid") {
+      const { unprocessable } = await import("../errors.js");
+      mockIssueService.getDependencyReadiness.mockRejectedValue(unprocessable("Blocked-by issues must belong to the same company"));
+    }
     mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
       ...issue, ...patch, updatedAt: new Date(),
     }));
@@ -290,9 +294,15 @@ describe("issue execution policy routes", () => {
     const res = await request(await createApp({ type: "agent", agentId, companyId: "company-1",
       runId: "55555555-5555-4555-8555-555555555555" })).patch(`/api/issues/${issue.id}`)
       .send({ status: "done", blockedByIssueIds: [blockerId], comment: "Approved" });
-    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.status, JSON.stringify(res.body)).toBe(kind === "invalid" ? 422 : 200);
     expect(mockRunnerGoalService.projection).not.toHaveBeenCalled();
     expect(mockHeartbeatService.cancelRun).not.toHaveBeenCalled();
+    if (kind === "invalid") {
+      expect(res.body.error).toBe("Blocked-by issues must belong to the same company");
+      expect(mockIssueService.update).not.toHaveBeenCalled();
+      expect(mockIssueService.addComment).not.toHaveBeenCalled();
+      return;
+    }
     expect(mockIssueService.update.mock.calls[0]?.[1]).toMatchObject({ status: "in_review",
       executionState: { status: "completed", dependencyHold: { unresolvedBlockerIssueIds: [blockerId] } } });
   });

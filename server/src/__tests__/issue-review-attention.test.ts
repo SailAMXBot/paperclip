@@ -199,6 +199,41 @@ describeEmbeddedPostgres("issue review attention", () => {
     expect(await svc.getDependencyReadiness(issueId)).toMatchObject({ isDependencyReady: false });
   });
 
+  it.each(["missing", "cross-company", "self", "cycle"])("rejects %s proposed blockers during approval preflight", async (kind) => {
+    const { companyId, agentId } = await seed();
+    const issueId = await insertReview({ companyId, agentId, identifier: "RVA-410" });
+    let blockerId = randomUUID();
+    if (kind === "cross-company") {
+      const otherCompanyId = randomUUID();
+      await db.insert(companies).values({ id: otherCompanyId, name: "Other company", issuePrefix: "OTHER" });
+      await db.insert(issues).values({ id: blockerId, companyId: otherCompanyId, title: "Private blocker", status: "done" });
+    } else if (kind === "self") {
+      blockerId = issueId;
+    } else if (kind === "cycle") {
+      await db.insert(issues).values({ id: blockerId, companyId, title: "Dependent", status: "done" });
+      await db.insert(issueRelations).values({ companyId, issueId, relatedIssueId: blockerId, type: "blocks" });
+    }
+    const before = await svc.getById(issueId);
+    await expect(svc.getDependencyReadiness(issueId, db, [blockerId])).rejects.toThrow(
+      kind === "self" ? "Issue cannot be blocked by itself"
+        : kind === "cycle" ? "Blocking relations cannot contain cycles"
+        : "Blocked-by issues must belong to the same company",
+    );
+    expect(await svc.getById(issueId)).toEqual(before);
+    expect(await svc.getDependencyReadiness(issueId)).toMatchObject({ isDependencyReady: true });
+  });
+
+  it("accepts duplicate valid proposed blockers without mutating relations", async () => {
+    const { companyId, agentId } = await seed();
+    const issueId = await insertReview({ companyId, agentId, identifier: "RVA-420" });
+    const blockerId = randomUUID();
+    await db.insert(issues).values({ id: blockerId, companyId, title: "Complete", status: "done" });
+    expect(await svc.getDependencyReadiness(issueId, db, [blockerId, blockerId])).toMatchObject({
+      isDependencyReady: true, blockerIssueIds: [blockerId],
+    });
+    expect(await svc.getDependencyReadiness(issueId)).toMatchObject({ blockerIssueIds: [] });
+  });
+
   it("refuses a builder completing an issue with unresolved blockers", async () => {
     const { companyId, agentId } = await seed();
     const issueId = await insertReview({ companyId, agentId, identifier: "RVA-104" });

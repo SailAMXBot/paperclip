@@ -7428,6 +7428,29 @@ export function issueService(db: Db) {
     }
   }
 
+  async function validateBlockedByIssueIds(
+    issueId: string,
+    companyId: string,
+    blockedByIssueIds: string[],
+    dbOrTx: any = db,
+  ) {
+    const deduped = [...new Set(blockedByIssueIds)];
+    if (deduped.includes(issueId)) {
+      throw unprocessable("Issue cannot be blocked by itself");
+    }
+    if (deduped.length > 0) {
+      const relatedIssues = await dbOrTx
+        .select({ id: issues.id })
+        .from(issues)
+        .where(and(eq(issues.companyId, companyId), inArray(issues.id, deduped)));
+      if (relatedIssues.length !== deduped.length) {
+        throw unprocessable("Blocked-by issues must belong to the same company");
+      }
+      await assertNoBlockingCycles(companyId, issueId, deduped, dbOrTx);
+    }
+    return deduped;
+  }
+
   async function syncBlockedByIssueIds(
     issueId: string,
     companyId: string,
@@ -7435,32 +7458,16 @@ export function issueService(db: Db) {
     actor: { agentId?: string | null; userId?: string | null } = {},
     dbOrTx: any = db,
   ) {
-    const deduped = [...new Set(blockedByIssueIds)];
-    if (deduped.some((candidate) => candidate === issueId)) {
-      throw unprocessable("Issue cannot be blocked by itself");
-    }
-
-    if (deduped.length > 0) {
-      const lockedIssueIds = [issueId, ...deduped].sort();
+    if (blockedByIssueIds.length > 0) {
+      const lockedIssueIds = [...new Set([issueId, ...blockedByIssueIds])].sort();
       await dbOrTx.execute(
         sql`SELECT ${issues.id} FROM ${issues}
             WHERE ${and(eq(issues.companyId, companyId), inArray(issues.id, lockedIssueIds))}
             ORDER BY ${issues.id}
             FOR UPDATE`,
       );
-      const relatedIssues = await dbOrTx
-        .select({ id: issues.id })
-        .from(issues)
-        .where(
-          and(eq(issues.companyId, companyId), inArray(issues.id, deduped)),
-        );
-      if (relatedIssues.length !== deduped.length) {
-        throw unprocessable(
-          "Blocked-by issues must belong to the same company",
-        );
-      }
-      await assertNoBlockingCycles(companyId, issueId, deduped, dbOrTx);
     }
+    const deduped = await validateBlockedByIssueIds(issueId, companyId, blockedByIssueIds, dbOrTx);
 
     await dbOrTx
       .delete(issueRelations)
@@ -9067,6 +9074,11 @@ export function issueService(db: Db) {
           (rows: Array<{ id: string; companyId: string }>) => rows[0] ?? null,
         );
       if (!issue) throw notFound("Issue not found");
+      // Validate proposed edits before callers perform terminal run side effects.
+      // syncBlockedByIssueIds repeats this validation under the update lock.
+      if (proposedBlockerIds !== undefined) {
+        proposedBlockerIds = await validateBlockedByIssueIds(issueId, issue.companyId, proposedBlockerIds, dbOrTx);
+      }
       const readiness = await listIssueDependencyReadinessMap(
         dbOrTx,
         issue.companyId,
